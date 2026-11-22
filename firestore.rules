@@ -1,0 +1,196 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidCategory(c) {
+      return c in [
+        'Mistri',
+        'Mazdoor',
+        'Plumber',
+        'Electrician',
+        'Painter',
+        'Carpenter',
+        'AC Technician',
+        'Tile Fixer',
+        'Shadi / Event Bus',
+        'Long Route Coaster',
+        'Car / Rent a Car',
+        'Goods Delivery Truck'
+      ];
+    }
+
+    function isValidTown(t) {
+      return t in [
+        'Baldia Town',
+        'Orangi Town',
+        'Gulshan-e-Iqbal',
+        'Gulistan-e-Jauhar',
+        'North Nazimabad',
+        'DHA / Clifton',
+        'Saddar / Lyari',
+        'Korangi / Landhi',
+        'Malir / Shah Faisal'
+      ];
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+             data.role in ['UNSET', 'CUSTOMER', 'KARIGAR'] &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() <= 25)) &&
+             (!('town' in data) || (data.town is string && data.town.size() <= 60)) &&
+             (!('address' in data) || (data.address is string && data.address.size() <= 200)) &&
+             (!('karigarCategory' in data) || data.karigarCategory == '' || isValidCategory(data.karigarCategory)) &&
+             (!('karigarRate' in data) || (data.karigarRate is string && data.karigarRate.size() <= 60)) &&
+             (!('karigarActive' in data) || data.karigarActive is bool) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidKarigarProfile(data) {
+      return data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 &&
+             data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 80 &&
+             isValidCategory(data.category) &&
+             isValidTown(data.town) &&
+             data.exactLocation is string && data.exactLocation.size() >= 2 && data.exactLocation.size() <= 150 &&
+             data.phone is string && data.phone.size() >= 7 && data.phone.size() <= 25 &&
+             data.rate is string && data.rate.size() >= 2 && data.rate.size() <= 60 &&
+             data.active is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidBooking(data) {
+      return data.customerId is string && data.customerId.size() >= 1 && data.customerId.size() <= 128 &&
+             isValidId(data.karigarId) &&
+             data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 80 &&
+             data.customerPhone is string && data.customerPhone.size() >= 7 && data.customerPhone.size() <= 25 &&
+             data.customerArea is string && data.customerArea.size() >= 2 && data.customerArea.size() <= 180 &&
+             data.karigarName is string && data.karigarName.size() >= 2 && data.karigarName.size() <= 80 &&
+             isValidCategory(data.karigarCategory) &&
+             isValidTown(data.karigarTown) &&
+             data.karigarPhone is string && data.karigarPhone.size() >= 7 && data.karigarPhone.size() <= 25 &&
+             data.karigarRate is string && data.karigarRate.size() >= 2 && data.karigarRate.size() <= 60 &&
+             (!('details' in data) || (data.details is string && data.details.size() <= 400)) &&
+             data.status in ['PENDING', 'ACCEPTED', 'COMPLETED', 'DECLINED', 'CANCELLED'] &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // 1. Private User & Customer Profile
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'role', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'role', 'phone', 'town', 'address', 'karigarCategory', 'karigarRate', 'karigarActive', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'role', 'phone', 'town', 'address', 'karigarCategory', 'karigarRate', 'karigarActive', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // 2. Karigar & Transport Partner Directory
+    match /karigars/{karigarId} {
+      allow get: if isSignedIn() && isValidId(karigarId) && (request.auth.uid == karigarId || existing().active == true);
+      allow list: if isSignedIn() && (existing().active == true || existing().ownerId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(karigarId) &&
+                       request.auth.uid == karigarId &&
+                       incoming().ownerId == request.auth.uid &&
+                       incoming().keys().hasAll(['ownerId', 'fullName', 'category', 'town', 'exactLocation', 'phone', 'rate', 'active', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['ownerId', 'fullName', 'category', 'town', 'exactLocation', 'phone', 'rate', 'active', 'createdAt', 'updatedAt']) &&
+                       isValidKarigarProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(karigarId) &&
+                       request.auth.uid == karigarId &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidKarigarProfile(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'category', 'town', 'exactLocation', 'phone', 'rate', 'active', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(karigarId) && request.auth.uid == karigarId;
+    }
+
+    // 3. Booking Requests (Customer <-> Karigar)
+    match /bookings/{bookingId} {
+      allow get: if isSignedIn() && isValidId(bookingId) && (existing().customerId == request.auth.uid || existing().karigarId == request.auth.uid);
+      allow list: if isSignedIn() && (existing().customerId == request.auth.uid || existing().karigarId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(bookingId) &&
+                       isValidBooking(incoming()) &&
+                       incoming().customerId == request.auth.uid &&
+                       incoming().status == 'PENDING' &&
+                       incoming().keys().hasAll([
+                         'customerId', 'karigarId', 'customerName', 'customerPhone', 'customerArea',
+                         'karigarName', 'karigarCategory', 'karigarTown', 'karigarPhone', 'karigarRate',
+                         'status', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'customerId', 'karigarId', 'customerName', 'customerPhone', 'customerArea',
+                         'karigarName', 'karigarCategory', 'karigarTown', 'karigarPhone', 'karigarRate',
+                         'details', 'status', 'createdAt', 'updatedAt'
+                       ]) &&
+                       exists(/databases/$(database)/documents/karigars/$(incoming().karigarId));
+
+      allow update: if isSignedIn() &&
+                       isValidId(bookingId) &&
+                       isValidBooking(incoming()) &&
+                       incoming().customerId == existing().customerId &&
+                       incoming().karigarId == existing().karigarId &&
+                       incoming().createdAt == existing().createdAt &&
+                       existing().status in ['PENDING', 'ACCEPTED'] &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+                       (
+                         (
+                           request.auth.uid == existing().karigarId &&
+                           (
+                             (existing().status == 'PENDING' && incoming().status in ['ACCEPTED', 'DECLINED', 'COMPLETED']) ||
+                             (existing().status == 'ACCEPTED' && incoming().status == 'COMPLETED')
+                           )
+                         ) ||
+                         (
+                           request.auth.uid == existing().customerId &&
+                           existing().status == 'PENDING' &&
+                           incoming().status == 'CANCELLED'
+                         )
+                       );
+
+      allow delete: if false;
+    }
+  }
+}
