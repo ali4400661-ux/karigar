@@ -15,7 +15,6 @@ jobs:
 
       - name: Unzip project and locate Android root
         run: |
-          ls -la
           mkdir -p _unzipped
           for z in *.zip *.ZIP; do
             if [ -f "$z" ]; then
@@ -23,14 +22,13 @@ jobs:
               unzip -o "$z" -d _unzipped
             fi
           done
-          GRADLEW_PATH=$(find _unzipped -name "gradlew" -type f | head -n 1)
-          echo "Found gradlew at: $GRADLEW_PATH"
-          if [ -n "$GRADLEW_PATH" ]; then
-            PROJECT_DIR=$(dirname "$GRADLEW_PATH")
-            cp -r "$PROJECT_DIR"/. .
+          SETTINGS_PATH=$(find _unzipped \( -name "settings.gradle.kts" -o -name "settings.gradle" \) -type f | head -n 1)
+          if [ -n "$SETTINGS_PATH" ]; then
+            PROJECT_DIR=$(dirname "$SETTINGS_PATH")
+            echo "Found Android project root at: $PROJECT_DIR"
+            cp -rn "$PROJECT_DIR"/. .
           else
-            echo "No gradlew found inside zip. Listing _unzipped:"
-            find _unzipped -maxdepth 4
+            echo "No settings.gradle(.kts) found inside zip."
             exit 1
           fi
 
@@ -40,10 +38,16 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Build Debug APK
+      - name: Install Gradle & generate wrapper if missing
         run: |
+          if [ ! -f "./gradlew" ]; then
+            sudo apt-get update && sudo apt-get install -y gradle
+            gradle wrapper --gradle-version 8.7 --distribution-type bin
+          fi
           chmod +x gradlew
-          ./gradlew assembleDebug
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
