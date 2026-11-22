@@ -1,6 +1,0 @@
-{
-  "name": "Karigar",
-  "description": "Karachi skilled trades and transport booking app with Google Sign-In, Customer booking, and Karigar Partner dashboard.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
